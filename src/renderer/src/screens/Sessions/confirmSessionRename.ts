@@ -8,6 +8,8 @@ export interface ConfirmSessionRenameOptions {
   currentTitle: string;
   /** True when this session is still the one being edited. */
   isStillEditing: () => boolean;
+  isCurrentContext: () => boolean;
+  setSaving: (saving: boolean) => void;
   applyOptimistic: (title: string) => void;
   rollback: () => void;
   clearEditing: () => void;
@@ -16,7 +18,13 @@ export interface ConfirmSessionRenameOptions {
   persist: (sessionId: string, title: string) => Promise<void>;
 }
 
-export type ConfirmSessionRenameResult = "cancelled" | "saved" | "failed";
+export type ConfirmSessionRenameResult =
+  | "cancelled"
+  | "saved"
+  | "failed"
+  | "pending";
+
+const pendingRenameInputs = new WeakSet<object>();
 
 /**
  * Shared inline-rename flow for the sidebar and Sessions modal: normalize,
@@ -26,19 +34,23 @@ export type ConfirmSessionRenameResult = "cancelled" | "saved" | "failed";
 export async function confirmSessionRename(
   opts: ConfirmSessionRenameOptions,
 ): Promise<ConfirmSessionRenameResult> {
+  if (pendingRenameInputs.has(opts.inputRef)) return "pending";
   const normalized = normalizeSessionTitle(opts.value);
   if (!normalized || normalized === opts.currentTitle) {
     opts.clearEditing();
     return "cancelled";
   }
 
+  pendingRenameInputs.add(opts.inputRef);
+  opts.setSaving(true);
   opts.applyOptimistic(normalized);
   try {
     await opts.persist(opts.sessionId, normalized);
-    if (opts.isStillEditing()) opts.clearEditing();
+    if (opts.isCurrentContext() && opts.isStillEditing()) opts.clearEditing();
     return "saved";
   } catch (err) {
     console.error("Failed to rename session", opts.sessionId, err);
+    if (!opts.isCurrentContext()) return "failed";
     opts.rollback();
     const message =
       err instanceof Error && err.message
@@ -47,10 +59,15 @@ export async function confirmSessionRename(
     toast.error(message);
     if (opts.isStillEditing()) {
       setTimeout(() => {
-        opts.inputRef.current?.focus();
-        opts.inputRef.current?.select();
+        if (opts.isCurrentContext() && opts.isStillEditing()) {
+          opts.inputRef.current?.focus();
+          opts.inputRef.current?.select();
+        }
       }, 0);
     }
     return "failed";
+  } finally {
+    pendingRenameInputs.delete(opts.inputRef);
+    opts.setSaving(false);
   }
 }

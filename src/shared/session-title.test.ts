@@ -10,6 +10,13 @@ describe("normalizeSessionTitle", () => {
   it("trims and collapses internal whitespace", () => {
     expect(normalizeSessionTitle("  Hello   World  ")).toBe("Hello World");
   });
+  it("matches Agent control-character cleanup without removing emoji", () => {
+    expect(normalizeSessionTitle(" A\u0000\u200b\u202e\ud800😀\n B ")).toBe(
+      "A�😀 B",
+    );
+    expect(validateNormalizedSessionTitle("😀".repeat(100))).toBeNull();
+    expect(validateNormalizedSessionTitle("😀".repeat(101))).toBe("too_long");
+  });
 });
 
 describe("validateNormalizedSessionTitle", () => {

@@ -160,6 +160,7 @@ function groupSessionsByWorkspace(sessions: RecentSession[]): {
  */
 const SidebarRecentSessions = memo(function SidebarRecentSessions({
   open,
+  connectionId,
   activeProfile,
   currentSessionId,
   loadingSessionIds,
@@ -169,6 +170,8 @@ const SidebarRecentSessions = memo(function SidebarRecentSessions({
   scrollRootRef,
 }: {
   open: boolean;
+  /** Stable connection registry id used to route every session operation. */
+  connectionId: string;
   /** Active profile — the list is per-profile, so switching forces a reload. */
   activeProfile: string;
   currentSessionId: string | null;
@@ -209,6 +212,12 @@ const SidebarRecentSessions = memo(function SidebarRecentSessions({
   const [editingTitle, setEditingTitle] = useState("");
   const editingIdRef = useRef<string | null>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const [renameSaving, setRenameSaving] = useState(false);
+  const renameContext = `${connectionId}\0${activeProfile}`;
+  const renameContextRef = useRef(renameContext);
+  useEffect(() => {
+    renameContextRef.current = renameContext;
+  }, [renameContext]);
   // Pending delete confirmation (small inline dialog in a portal-free overlay).
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -315,13 +324,16 @@ const SidebarRecentSessions = memo(function SidebarRecentSessions({
       if (!force && now - lastRefreshRef.current < REFRESH_THROTTLE_MS) return;
       lastRefreshRef.current = now;
       try {
-        const synced = await window.hermesAPI.syncSessionCache();
+        const synced = await window.hermesAPI.syncSessionCache(
+          connectionId,
+          activeProfile,
+        );
         applyLoadedWindow(synced);
       } catch {
         // keep whatever we had — the list is best-effort UI sugar
       }
     },
-    [applyLoadedWindow],
+    [activeProfile, applyLoadedWindow, connectionId],
   );
 
   const loadNextPage = useCallback(async (): Promise<void> => {
@@ -332,6 +344,8 @@ const SidebarRecentSessions = memo(function SidebarRecentSessions({
       const nextPage = await window.hermesAPI.listCachedSessions(
         RECENT_SESSIONS_PAGE_SIZE + 1,
         sessionsRef.current.length,
+        connectionId,
+        activeProfile,
       );
       appendPage(nextPage);
     } catch {
@@ -340,7 +354,7 @@ const SidebarRecentSessions = memo(function SidebarRecentSessions({
       loadingMoreRef.current = false;
       setLoadingMore(false);
     }
-  }, [appendPage, open]);
+  }, [activeProfile, appendPage, connectionId, open]);
 
   const maybeLoadNextPage = useCallback((): void => {
     const root = scrollRootRef.current;
@@ -363,6 +377,9 @@ const SidebarRecentSessions = memo(function SidebarRecentSessions({
           // One over the page size so the cache read alone can decide whether
           // another page exists without a separate count query.
           RECENT_SESSIONS_PAGE_SIZE + 1,
+          0,
+          connectionId,
+          activeProfile,
         );
         if (!cancelled) applyFirstPage(cached);
       } catch {
@@ -370,7 +387,10 @@ const SidebarRecentSessions = memo(function SidebarRecentSessions({
       }
       lastRefreshRef.current = Date.now();
       try {
-        const synced = await window.hermesAPI.syncSessionCache();
+        const synced = await window.hermesAPI.syncSessionCache(
+          connectionId,
+          activeProfile,
+        );
         if (!cancelled) applyFirstPage(synced);
       } catch {
         // cache read above already painted something
@@ -379,7 +399,7 @@ const SidebarRecentSessions = memo(function SidebarRecentSessions({
     return () => {
       cancelled = true;
     };
-  }, [open, activeProfile, applyFirstPage]);
+  }, [open, connectionId, activeProfile, applyFirstPage]);
 
   // While open: pick up background sessions (gateway, cron, other devices)
   // on focus and on a slow timer. No listeners or timers at all when closed.
@@ -494,14 +514,18 @@ const SidebarRecentSessions = memo(function SidebarRecentSessions({
     });
   }, []);
 
-  const startRename = useCallback((s: RecentSession): void => {
-    setEditingId(s.id);
-    setEditingTitle(s.title || "");
-    setTimeout(() => {
-      renameInputRef.current?.focus();
-      renameInputRef.current?.select();
-    }, 0);
-  }, []);
+  const startRename = useCallback(
+    (s: RecentSession): void => {
+      if (renameSaving) return;
+      setEditingId(s.id);
+      setEditingTitle(s.title || "");
+      setTimeout(() => {
+        renameInputRef.current?.focus();
+        renameInputRef.current?.select();
+      }, 0);
+    },
+    [renameSaving],
+  );
 
   const cancelRename = useCallback((): void => {
     setEditingId(null);
@@ -516,6 +540,8 @@ const SidebarRecentSessions = memo(function SidebarRecentSessions({
         sessionId: id,
         value,
         currentTitle: previous,
+        isCurrentContext: () => renameContextRef.current === renameContext,
+        setSaving: setRenameSaving,
         isStillEditing: () => editingIdRef.current === id,
         applyOptimistic: (title) =>
           setSessions((prev) =>
@@ -529,10 +555,15 @@ const SidebarRecentSessions = memo(function SidebarRecentSessions({
         inputRef: renameInputRef,
         fallbackErrorMessage: t("sessions.renameFailed"),
         persist: (sessionId, title) =>
-          window.hermesAPI.updateSessionTitle(sessionId, title),
+          window.hermesAPI.updateSessionTitle(
+            sessionId,
+            title,
+            connectionId,
+            activeProfile,
+          ),
       });
     },
-    [cancelRename, t],
+    [cancelRename, t, connectionId, activeProfile, renameContext],
   );
 
   const handleMoveToProject = useCallback(
@@ -588,7 +619,7 @@ const SidebarRecentSessions = memo(function SidebarRecentSessions({
         return next;
       });
       try {
-        await window.hermesAPI.deleteSession(id);
+        await window.hermesAPI.deleteSession(id, connectionId, activeProfile);
         onSessionDeleted?.(id);
       } catch (err) {
         console.error("Failed to delete session", id, err);
@@ -598,7 +629,7 @@ const SidebarRecentSessions = memo(function SidebarRecentSessions({
         void refresh(true);
       }
     },
-    [onSessionDeleted, refresh],
+    [activeProfile, connectionId, onSessionDeleted, refresh],
   );
 
   const openMenuForSession = useCallback(
@@ -670,6 +701,7 @@ const SidebarRecentSessions = memo(function SidebarRecentSessions({
         >
           <input
             ref={renameInputRef}
+            disabled={renameSaving}
             className="sidebar-recent-session-rename"
             type="text"
             value={editingTitle}
@@ -922,6 +954,11 @@ const SidebarRecentSessions = memo(function SidebarRecentSessions({
           onRename={() => {
             const s = sessions.find((row) => row.id === menuTarget.id);
             if (s) startRename(s);
+          }}
+          onCopySessionId={(sessionId) => {
+            void window.hermesAPI
+              .copyToClipboard(sessionId)
+              .catch(() => undefined);
           }}
           onMoveToProject={(path) =>
             void handleMoveToProject(menuTarget.id, path)

@@ -20,6 +20,12 @@ Modals and pickers use a `--bg-secondary` tint plus `backdrop-filter: blur(30px)
 
 The blur is treated as pure enhancement, not a load-bearing layer. On the transparent vibrancy window above, `backdrop-filter` is unreliable in packaged macOS builds — it silently drops to a no-op even with hardware acceleration on — which left the earlier 85%-opaque panels showing sharp app content bleeding through (the "transparent modal" bug). Raising the tint to 97% in `main.css` makes every shared frosted surface — the settings/profile/models/schedules/gateway/profile-switch modals and the model/reasoning/fast-mode dropdowns — render near-identically for all users regardless of GPU or build type; where the blur *does* paint it adds a faint frost, but its absence is barely perceptible. Keep new glass surfaces at this opacity, not the old 85%, for the same reason.
 
+### Fast-mode icon alignment
+
+The Fast Mode status badge keeps its Zap glyph optically centered without allowing shared popover typography to override the icon's flex alignment.
+
+In `src/renderer/src/assets/main.css`, `.chat-fast-popover-icon` owns flex centering while the description typography selector targets only the popover's direct child `span`. [[tests/chat-fast-popover-css.test.ts]] protects that cascade boundary.
+
 ## Bottom status strip
 
 A native system strip pinned full-width beneath the sidebar+content row surfaces live state that was otherwise hidden: gateway/connection, active model, and skill count, plus real keyboard hints.
@@ -40,7 +46,7 @@ Visually the strip is a Safari-style tab bar: the strip uses the darker `--bg-se
 
 The bar always renders so it is always a drag area, but chips stay hidden only while the sole conversation is still a blank scratch chat.
 
-Chips show when more than one run is open, any run is loading, or any run has a session id/title (`showChips` in [[src/renderer/src/screens/Layout/ActiveSessionsBar.tsx#ActiveSessionsBar]]). When chips show, a browser-style new-tab **"+"** button (`.active-session-new`, `no-drag`) trails them and calls `onNew` → `handleNewChat` in [[src/renderer/src/screens/Layout/Layout.tsx]] to open a fresh conversation.
+Chips show when more than one run is open, any run is loading, or any run has a session id/title (`showChips` in [[src/renderer/src/screens/Layout/ActiveSessionsBar.tsx#ActiveSessionsBar]]). A loading chip renders a thinking-orbs [[loading-indicators|OrbLoader]] (`composing`, size 20) in place of its profile avatar — the orb's canvas is transparent and theme-aware, so `.active-session-chip-orb` drops the colour-filled avatar circle rather than painting the profile colour behind it. When chips show, a browser-style new-tab **"+"** button (`.active-session-new`, `no-drag`) trails them and calls `onNew` → `handleNewChat` in [[src/renderer/src/screens/Layout/Layout.tsx]] to open a fresh conversation.
 
 Because the bar doubles as the drag strip, [[src/renderer/src/screens/Layout/Layout.tsx]] renders it as the first child of `.content`; the verify-warning banner (when shown) sits just below it, clear of the drag layer.
 
